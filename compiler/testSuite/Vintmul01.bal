@@ -1,10 +1,23 @@
 import ballerina/io;
 
 public function main() {
-  io:println(mul2(4, 2, 3)); // @output 24
-}
+    io:println(9223372036854775806 * 1); // @output 9223372036854775806
+    io:println(9223372036854775806 * 0); // @output 0
+    io:println(9223372036854775806 * -1); // @output -9223372036854775806
 
-function mul2(int x, int y, int z) returns int {
-  return x * y * z;
-}
+    io:println(1 * 1); // @output 1
+    io:println(1 * 0); // @output 0
+    io:println(1 * -1); // @output -1
 
+    io:println(0 * 1); // @output 0
+    io:println(0 * 0); // @output 0
+    io:println(0 * -1); // @output 0
+
+    io:println(-1 * 1); // @output -1
+    io:println(-1 * 0); // @output 0
+    io:println(-1 * -1); // @output 1
+
+    io:println(-9223372036854775806 * 1); // @output -9223372036854775806
+    io:println(-9223372036854775806 * 0); // @output 0
+    io:println(-9223372036854775806 * -1); // @output 9223372036854775806
+}

@@ -40,11 +40,20 @@ class Module {
 
     public function generateFunctionCode(int i) returns bir:FunctionCode|err:Semantic|err:Unimplemented {
         FunctionDef ast = self.functionDefSource[i];
-        return codeGenFunction(self, self.functionDefns[i].signature, ast.paramNames, ast.body);
+        return codeGenFunction(self, ast.name, self.functionDefns[i].signature, ast.paramNames, ast.body);
     }
    
     public function getFunctionDefns() returns readonly & bir:FunctionDefn[] {
         return self.functionDefns;
+    }
+
+    public function getPrefixForModuleId(bir:ModuleId id) returns string? {
+        foreach var [prefix, moduleId] in self.imports.entries() {
+            if moduleId == id {
+                return  prefix;
+            }
+        }
+        return ();
     }
 
 }
