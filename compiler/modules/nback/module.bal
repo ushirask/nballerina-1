@@ -1,4 +1,5 @@
 import wso2/nballerina.bir;
+import wso2/nballerina.comm.err;
 import wso2/nballerina.print.llvm;
 import wso2/nballerina.types as t;
 
@@ -56,10 +57,47 @@ public function buildModule(bir:Module birMod, *Options options) returns [llvm:M
         DISubprogram? diFunc = di == () ? () : diFuncs[i];
         Scaffold scaffold = new(mod, llFuncs[i], diFunc, builder, defn, code);
         buildPrologue(builder, scaffold, defn.position);
-        check buildFunctionBody(builder, scaffold, code);
+        check buildFunctionBody(builder, scaffold, code.blocks, calculateBuildOrder(code.blocks));
     }
     check birMod.finish();
     return [llMod, createTypeUsage(mod.usedSemTypes)];
+}
+
+function calculateBuildOrder(bir:BasicBlock[] blocks) returns bir:Label[] {
+    bir:Label[] ordered = [];
+    boolean[] visited = [];
+    visited[blocks.length()] = false;
+    topoSort(blocks, 0, visited, ordered);
+    int orphaned = blocks.length() - ordered.length();
+    if orphaned != 0 {
+        panic err:impossible(orphaned.toString() + " orphan basic block" + (orphaned == 1 ? "" : "s"));
+    }
+    return ordered.reverse();
+}
+
+function topoSort(bir:BasicBlock[] blocks, bir:Label label, boolean[] visited, bir:Label[] ordered) {
+    if visited[label] {
+        return;
+    }
+    visited[label] = true;
+    bir:BasicBlock block = blocks[label];
+    bir:Label? onPanic = block.onPanic;
+    if onPanic != () {
+        topoSort(blocks, onPanic, visited, ordered);
+    }
+    var insns = block.insns;
+    var insnsLen = insns.length();
+    if insnsLen > 0 {
+        var insn = insns[insnsLen - 1];
+        if insn is bir:BranchInsn && !insn.backward {
+            topoSort(blocks, insn.dest, visited, ordered);
+        }
+        else if insn is bir:CondBranchInsn {
+            topoSort(blocks, insn.ifTrue, visited, ordered);
+            topoSort(blocks, insn.ifFalse, visited, ordered);
+        }
+    }
+    ordered.push(label);
 }
 
 function createTypeUsage(table<UsedSemType> usedSemTypes) returns TypeUsage {
@@ -107,8 +145,8 @@ function createFunctionDI(ModuleDI mod, bir:File[] files, bir:FunctionDefn birFu
     });
 }
 
-function buildFunctionBody(llvm:Builder builder, Scaffold scaffold, bir:FunctionCode code) returns BuildError? {
-    foreach var b in code.blocks {
-        check buildBasicBlock(builder, scaffold, b);
+function buildFunctionBody(llvm:Builder builder, Scaffold scaffold, bir:BasicBlock[] blocks, bir:Label[] buildOrder) returns BuildError? {
+    foreach var l in buildOrder {
+        check buildBasicBlock(builder, scaffold, blocks[l]);
     }
 }
