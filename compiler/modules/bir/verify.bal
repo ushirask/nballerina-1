@@ -6,16 +6,26 @@ import wso2/nballerina.comm.diagnostic as d;
 
 type Range d:Range;
 
+type TmpRegion record {|
+    int entry;
+    int? exit;
+    int? parent;
+    boolean hasBackward = false;
+|};
+
 class VerifyContext {
     private final Module mod;
     private final t:Context tc;
     private final FunctionDefn defn;
+    final FunctionCode code;
+    TmpRegion[] regions = [];
 
-    function init(Module mod, FunctionDefn defn) {
+    function init(Module mod, FunctionDefn defn, FunctionCode code) {
         self.mod = mod;
         t:Context tc  = mod.getTypeContext();
         self.tc = tc;
         self.defn = defn;
+        self.code = code;
     }
 
     function isSubtype(t:SemType s, t:SemType t) returns boolean {
@@ -66,83 +76,56 @@ class VerifyContext {
 }
 
 public function verifyFunctionCode(Module mod, FunctionDefn defn, FunctionCode code) returns Error? {
-    VerifyContext cx = new(mod, defn);
+    VerifyContext cx = new(mod, defn, code);
     foreach BasicBlock b in code.blocks {
         check verifyBasicBlock(cx, b);
     }
-    foreach Region r in code.regions {
-        check verifyRegion(cx, r, code.blocks);
+    check verifyRegions(cx, defn.position);
+}
+
+function verifyRegions(VerifyContext vc, Position pos) returns Error? {
+    BasicBlock[] blocks = vc.code.blocks;
+    int blockLen = blocks.length();
+    boolean[] visited = from int b in 0 ..< blockLen select false;
+
+    int label = 0;
+    while label < blockLen {
+        label = createRegions(vc, visited, label, label, ()) + 1;
     }
+    if visited.indexOf(false) != () {
+        return vc.invalidErr("invalid blocks in regions", pos);
+    }
+}
+
+function createRegions(VerifyContext vc, boolean[] visited, int entry, Label label, int? parent) returns int {
+    visited[label] = true;
+    Insn[] insns = vc.code.blocks[label].insns;
+    var insnsLen = insns.length();
+    if insnsLen > 0 {
+        Insn insn = insns[insnsLen - 1];
+        if insn is BranchInsn {
+            if insn.backward {
+                vc.regions.push({ entry, exit : label, parent, hasBackward: true });
+                return label;
+            }
+            else {
+                return createRegions(vc, visited, entry, insn.dest, parent);
+            }
+        }
+        else if insn is CondBranchInsn {
+            return int:max(createRegions(vc, visited, entry, insn.ifFalse, parent),
+             createRegions(vc, visited, insn.ifTrue, insn.ifTrue, label));
+        }
+    }
+    if entry != label {
+        vc.regions.push({entry, exit : label, parent});
+    }
+    return label;
 }
 
 type IntBinaryInsn IntArithmeticBinaryInsn|IntBitwiseBinaryInsn;
 
 type Error err:Semantic|err:Internal;
-
-function verifyRegion(VerifyContext vc, Region region, BasicBlock[] blocks) returns Error? {
-    Insn insn = getCondInsn(blocks, region.entry);
-    if region.kind == REGION_COND && region.exit != () {
-        while insn is CondBranchInsn {
-            if insn.ifFalse != region.exit {
-                Insn binsn = getCondInsn(blocks, insn.ifFalse);
-                if binsn is BranchInsn && binsn.dest != region.exit {
-                    Insn? ib = getCont(binsn, blocks);
-                    if ib is Insn {
-                        insn = ib;
-                        continue;
-                    }
-                    Insn binsn2 = getCondInsn(blocks, insn.ifTrue);
-                    if binsn2 is BranchInsn && binsn2.dest != region.exit {
-                        ib = getCont(binsn2, blocks);
-                        if ib is Insn {
-                            insn = ib;
-                            continue;
-                        }
-                        return vc.invalidErr("condional region exit is invalid", pos=insn.pos);
-                    }
-                }
-            }
-            break;
-        }
-    }
-    if region.kind == REGION_LOOP && region.exit != () {
-        while insn is BranchInsn {
-            if insn.dest == region.exit {
-                return;
-            }
-            insn = getCondInsn(blocks, insn.dest);
-        }
-        if insn is CondBranchInsn {
-            if insn.ifFalse == region.exit {
-                return;
-            }
-            Insn insn2 = getCondInsn(blocks, insn.ifTrue);
-            if insn2 is BranchInsn && insn2.dest == region.exit {
-                return;
-            }
-            insn2 = getCondInsn(blocks, insn.ifFalse);
-            if insn2 is BranchInsn && insn2.dest == region.exit {
-                return;
-            }
-        }
-        return vc.invalidErr("loop region exit is invalid", pos=insn.pos);
-    }
-}
-
-function getCont(Insn insn, BasicBlock[] blocks) returns Insn? {
-    if insn is BranchInsn {
-        return getCondInsn(blocks, insn.dest);
-    }
-    else if insn is CondBranchInsn {
-        return insn;
-    }
-    return;
-}
-
-function getCondInsn(BasicBlock[] blocks, Label label) returns Insn {
-    BasicBlock cont = blocks[label];
-    return cont.insns[cont.insns.length() - 1];
-}
 
 function verifyBasicBlock(VerifyContext vc, BasicBlock bb) returns Error? {
     foreach Insn insn in bb.insns {
