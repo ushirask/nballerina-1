@@ -19,6 +19,7 @@ class VerifyContext {
     private final FunctionDefn defn;
     final FunctionCode code;
     TmpRegion[] regions = [];
+    Label[] currentRegion = [];
 
     function init(Module mod, FunctionDefn defn, FunctionCode code) {
         self.mod = mod;
@@ -90,17 +91,21 @@ function verifyRegions(VerifyContext vc, Position pos) returns Error? {
 
     int label = 0;
     while label < blockLen {
-        label = createRegions(vc, visited, label, label, ()) + 1;
+        label = check createRegions(vc, visited, label, label, pos) + 1;
     }
     if visited.indexOf(false) != () {
         return vc.invalidErr("invalid blocks in regions", pos);
     }
 }
 
-function createRegions(VerifyContext vc, boolean[] visited, int entry, Label label, int? parent) returns int {
+function createRegions(VerifyContext vc, boolean[] visited, int entry, Label label, Position pos, int? parent = ()) returns int|Error {
+    if vc.currentRegion.indexOf(label) != () {
+        return vc.invalidErr("loop in non-loop region", pos);
+    }
     if visited[label] {
         return label;
     }
+    vc.currentRegion.push(label);
     visited[label] = true;
     Insn[] insns = vc.code.blocks[label].insns;
     var insnsLen = insns.length();
@@ -108,22 +113,26 @@ function createRegions(VerifyContext vc, boolean[] visited, int entry, Label lab
         Insn insn = insns[insnsLen - 1];
         if insn is BranchInsn {
             if insn.backward {
-                vc.regions.push({ entry, exit : label, parent, hasBackward: true });
-                return label;
+                return vc.currentRegion.pop();
             }
             else {
-                return createRegions(vc, visited, entry, insn.dest, parent);
+                int r = check createRegions(vc, visited, entry, insn.dest, pos, parent);
+                if label != vc.currentRegion.pop() {
+                    return vc.invalidErr("error in region", pos);
+                }
+                return r;
             }
         }
         else if insn is CondBranchInsn {
-            return int:max(createRegions(vc, visited, entry, insn.ifFalse, parent),
-             createRegions(vc, visited, insn.ifTrue, insn.ifTrue, label));
+            int r = int:max(check createRegions(vc, visited, entry, insn.ifFalse, pos, parent),
+                check createRegions(vc, visited, insn.ifTrue, insn.ifTrue, label, pos));
+            if label != vc.currentRegion.pop() {
+                return vc.invalidErr("error in region", pos);
+            }
+            return r;
         }
     }
-    if entry != label {
-        vc.regions.push({entry, exit : label, parent});
-    }
-    return label;
+    return vc.currentRegion.pop();
 }
 
 type IntBinaryInsn IntArithmeticBinaryInsn|IntBitwiseBinaryInsn;
